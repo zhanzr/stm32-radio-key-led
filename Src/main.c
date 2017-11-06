@@ -35,6 +35,7 @@
   *
   ******************************************************************************
   */
+
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32f4xx_hal.h"
@@ -46,8 +47,15 @@
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
+
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim6;
+
+UART_HandleTypeDef huart6;
+DMA_HandleTypeDef hdma_usart6_tx;
+DMA_HandleTypeDef hdma_usart6_rx;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
@@ -55,13 +63,20 @@ LED_ConfigTypeDef ledcfg;
 uint8_t ledcolorturn = 0;
 bool flag_1ms = false;
 uint32_t timecount = 0;
+
+__IO uint16_t g_ADCBuf[3];
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_TIM3_Init(void);
-static void MX_TIM6_Init(void);                                    
+static void MX_TIM6_Init(void);
+static void MX_USART6_UART_Init(void);
+static void MX_ADC1_Init(void);
+                                    
 void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
                                 
 
@@ -88,7 +103,31 @@ void spin_ccw(void)
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
-
+#if defined(__ARMCC_VERSION)
+int stdout_putchar (int ch)
+{
+	uint8_t c = ch;
+	HAL_UART_Transmit(&huart6, &c, 1, 1);
+	return ch;
+}
+#else
+int write (int fd, const void *buf, size_t count)
+{
+	for(uint32_t i=0; i<count; ++i)
+	{
+		HAL_UART_Transmit(&huart6, buf+i, 1, 1);
+	}
+	return count;
+}
+int _write (int fd, const void *buf, size_t count)
+{
+	for(uint32_t i=0; i<count; ++i)
+	{
+		HAL_UART_Transmit(&huart6, buf+i, 1, 1);
+	}
+	return count;
+}
+#endif
 /* USER CODE END 0 */
 
 int main(void)
@@ -120,11 +159,15 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_TIM3_Init();
   MX_TIM6_Init();
+  MX_USART6_UART_Init();
+  MX_ADC1_Init();
 
   /* USER CODE BEGIN 2 */
-
+	printf("Key LED Demo F407 @ %u Hz\n", SystemCoreClock);
+	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)g_ADCBuf, 3);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -140,29 +183,32 @@ int main(void)
 	
   while (1)
   {
-	if( flag_1ms )
-	{
-		flag_1ms = false;
-		timecount++;
-		if( timecount > 5000 )
-		{
-			timecount = 0;
-			
-			__HAL_PWR_CLEAR_FLAG(PWR_FLAG_WU);
-			
-			/* Re-enable all used wakeup sources: Pin1(PA.0) */
-			HAL_PWR_EnableWakeUpPin(PWR_WAKEUP_PIN1);
+//		if( flag_1ms )
+//		{
+//			flag_1ms = false;
+//			timecount++;
+//			if( timecount > 5000 )
+//			{
+//				timecount = 0;
+//				
+//				__HAL_PWR_CLEAR_FLAG(PWR_FLAG_WU);
+//				
+//				/* Re-enable all used wakeup sources: Pin1(PA.0) */
+//				HAL_PWR_EnableWakeUpPin(PWR_WAKEUP_PIN1);
 
-			/* Request to enter STANDBY mode  */
-			HAL_PWR_EnterSTANDBYMode();
-		}
-	}
+//				/* Request to enter STANDBY mode  */
+//				HAL_PWR_EnterSTANDBYMode();
+//			}
+//		}
   /* USER CODE END WHILE */
 
   /* USER CODE BEGIN 3 */
-	Read_Spin(&spin);
-	Process_Spin(&spin);	
-	BSP_LED_REFRESH(&ledcfg);
+		Read_Spin(&spin);
+		Process_Spin(&spin);	
+		BSP_LED_REFRESH(&ledcfg);
+		HAL_Delay(1000);
+
+		printf("%u %u %u\n", g_ADCBuf[0], g_ADCBuf[1], g_ADCBuf[2]);
   }
   /* USER CODE END 3 */
 
@@ -227,6 +273,61 @@ void SystemClock_Config(void)
   HAL_NVIC_SetPriority(SysTick_IRQn, 0, 0);
 }
 
+/* ADC1 init function */
+static void MX_ADC1_Init(void)
+{
+
+  ADC_ChannelConfTypeDef sConfig;
+
+    /**Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion) 
+    */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV8;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.ScanConvMode = ENABLE;
+  hadc1.Init.ContinuousConvMode = ENABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 3;
+  hadc1.Init.DMAContinuousRequests = ENABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+    /**Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time. 
+    */
+  sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_480CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+    /**Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time. 
+    */
+  sConfig.Channel = ADC_CHANNEL_VREFINT;
+  sConfig.Rank = 2;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+    /**Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time. 
+    */
+  sConfig.Channel = ADC_CHANNEL_VBAT;
+  sConfig.Rank = 3;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+}
+
 /* TIM3 init function */
 static void MX_TIM3_Init(void)
 {
@@ -267,11 +368,6 @@ static void MX_TIM3_Init(void)
   sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    _Error_Handler(__FILE__, __LINE__);
-  }
-
   if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
@@ -307,6 +403,46 @@ static void MX_TIM6_Init(void)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
+
+}
+
+/* USART6 init function */
+static void MX_USART6_UART_Init(void)
+{
+
+  huart6.Instance = USART6;
+  huart6.Init.BaudRate = 256000;
+  huart6.Init.WordLength = UART_WORDLENGTH_8B;
+  huart6.Init.StopBits = UART_STOPBITS_1;
+  huart6.Init.Parity = UART_PARITY_NONE;
+  huart6.Init.Mode = UART_MODE_TX_RX;
+  huart6.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart6.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart6) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+}
+
+/** 
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void) 
+{
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA2_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
+  /* DMA2_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
+  /* DMA2_Stream6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream6_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream6_IRQn);
 
 }
 
@@ -362,11 +498,11 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PC13 PC1 PC2 PC3 
-                           PC4 PC5 PC7 PC8 
-                           PC9 PC10 PC11 PC12 */
+                           PC4 PC5 PC8 PC9 
+                           PC10 PC11 PC12 */
   GPIO_InitStruct.Pin = GPIO_PIN_13|GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3 
-                          |GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_7|GPIO_PIN_8 
-                          |GPIO_PIN_9|GPIO_PIN_10|GPIO_PIN_11|GPIO_PIN_12;
+                          |GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_8|GPIO_PIN_9 
+                          |GPIO_PIN_10|GPIO_PIN_11|GPIO_PIN_12;
   GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);

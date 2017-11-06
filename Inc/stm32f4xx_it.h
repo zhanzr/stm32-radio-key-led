@@ -57,6 +57,9 @@ void DebugMon_Handler(void);
 void PendSV_Handler(void);
 void SysTick_Handler(void);
 void TIM6_DAC_IRQHandler(void);
+void DMA2_Stream0_IRQHandler(void);
+void DMA2_Stream1_IRQHandler(void);
+void DMA2_Stream6_IRQHandler(void);
 
 #ifdef __cplusplus
 }
